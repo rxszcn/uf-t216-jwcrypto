@@ -2757,6 +2757,129 @@ class TestUnencodedPayload(unittest.TestCase):
             s.add_signature(jwk.JWK(**SymmetricKeys['keys'][1]),
                             protected=rfc7797_u_header)
 
+    def test_compact_unencoded_roundtrip_bytes(self):
+        # A payload containing spaces and no '.' characters must be
+        # carried verbatim through the compact serialization when b64
+        # is false, and restored to the exact original bytes on parse.
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        payload = b'raw exchange payload with spaces'
+
+        s = jws.JWS(payload)
+        s.add_signature(key, protected=rfc7797_u_header)
+        compact = s.serialize(compact=True)
+
+        # The raw payload appears unencoded in the compact token
+        self.assertIn(b'raw exchange payload with spaces',
+                      compact.encode('utf-8'))
+
+        p = jws.JWS()
+        p.deserialize(compact, key)
+        self.assertTrue(p.is_valid)
+        self.assertEqual(p.payload, payload)
+        # Re-serializing the parsed object reproduces the same token
+        self.assertEqual(p.serialize(compact=True), compact)
+
+    def test_compact_unencoded_roundtrip_str(self):
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        payload = 'raw exchange payload with spaces'
+
+        s = jws.JWS(payload)
+        s.add_signature(key, protected=rfc7797_u_header)
+        compact = s.serialize(compact=True)
+
+        p = jws.JWS()
+        p.deserialize(compact, key)
+        self.assertTrue(p.is_valid)
+        self.assertEqual(p.payload, payload.encode('utf-8'))
+        self.assertEqual(p.serialize(compact=True), compact)
+
+    def test_compact_unencoded_not_base64_decoded(self):
+        # Regression: the parser used to run the unencoded payload through
+        # base64url decoding, producing garbage bytes and a failed verify.
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        payload = b'JC4wMg'  # valid base64url alphabet, but must be kept raw
+
+        s = jws.JWS(payload)
+        s.add_signature(key, protected=rfc7797_u_header)
+        compact = s.serialize(compact=True)
+
+        p = jws.JWS()
+        p.deserialize(compact)
+        self.assertEqual(p.objects['payload'], payload)
+        p.verify(key)
+        self.assertTrue(p.is_valid)
+
+    def test_compact_unencoded_rfc7797_vector_detached(self):
+        # The RFC 7797 compact vector carries an empty (detached) payload;
+        # its payload '$.02' contains a '.' and thus cannot be attached in
+        # compact form. Verification with the detached payload must succeed.
+        token = \
+            'eyJhbGciOiJIUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19..' + \
+            'A5dxf2s96_n5FLueVuW1Z_vh161FwXZC4YLPff6dmDY'
+
+        p = jws.JWS()
+        p.deserialize(token)
+        p.verify(jwk.JWK(**SymmetricKeys['keys'][1]),
+                 detached_payload=rfc7797_payload)
+        self.assertTrue(p.is_valid)
+
+    def test_compact_unencoded_dot_payload_rejected(self):
+        # An unencoded payload containing '.' is ambiguous in compact
+        # serialization (it breaks the two-dot framing), so serializing
+        # and parsing such a token must not be silently accepted.
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        s = jws.JWS(b'a.b')
+        s.add_signature(key, protected=rfc7797_u_header)
+        with self.assertRaises(jws.InvalidJWSOperation):
+            s.serialize(compact=True)
+
+        token = \
+            'eyJhbGciOiJIUzI1NiIsImI2NCI6ZmFsc2UsImNyaXQiOlsiYjY0Il19.' + \
+            'a.b.' + \
+            'A5dxf2s96_n5FLueVuW1Z_vh161FwXZC4YLPff6dmDY'
+        with self.assertRaises(jws.InvalidJWSObject):
+            jws.JWS().deserialize(token)
+
+    def test_compact_encoded_path_unchanged(self):
+        # The default (b64 absent/true) compact path still base64url
+        # decodes the payload and round-trips correctly.
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        payload = b'raw exchange payload with spaces'
+
+        s = jws.JWS(payload)
+        s.add_signature(key, protected=rfc7797_e_header)
+        compact = s.serialize(compact=True)
+
+        p = jws.JWS()
+        p.deserialize(compact, key)
+        self.assertTrue(p.is_valid)
+        self.assertEqual(p.payload, payload)
+        self.assertEqual(p.serialize(compact=True), compact)
+
+    def test_compact_and_json_unencoded_parse_equivalence(self):
+        # The compact and JSON parsing paths must expose the same
+        # unencoded payload content for an equivalent token. The JSON
+        # path keeps an unencoded payload as 'str' while the compact path
+        # restores the raw bytes, so compare both as bytes.
+        key = jwk.JWK(**SymmetricKeys['keys'][1])
+        payload = 'raw exchange payload with spaces'
+
+        s = jws.JWS(payload)
+        s.add_signature(key, protected=rfc7797_u_header)
+        compact = s.serialize(compact=True)
+        json_token = s.serialize()
+
+        pc = jws.JWS()
+        pc.deserialize(compact)
+        pj = jws.JWS()
+        pj.deserialize(json_token)
+        compact_payload = pc.objects['payload']
+        json_payload = pj.objects['payload']
+        if isinstance(json_payload, str):
+            json_payload = json_payload.encode('utf-8')
+        self.assertEqual(compact_payload, json_payload)
+        self.assertEqual(compact_payload, payload.encode('utf-8'))
+
 
 class TestOverloadedOperators(unittest.TestCase):
 

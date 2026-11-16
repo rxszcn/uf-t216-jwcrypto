@@ -455,7 +455,14 @@ class JWS:
                 if len(p) > 0:
                     o['protected'] = p.decode('utf-8')
                     self._deserialize_b64(o, o['protected'])
-                o['payload'] = base64url_decode(str(data[1]))
+                # RFC 7797: when the protected header carries 'b64':false
+                # the payload is not base64url encoded, it must be carried
+                # through verbatim as the original payload bytes, instead
+                # of being run through the base64url decoding path.
+                if o.get('b64', True):
+                    o['payload'] = base64url_decode(str(data[1]))
+                else:
+                    o['payload'] = data[1].encode('utf-8')
                 o['signature'] = base64url_decode(str(data[2]))
 
             self.objects = o
